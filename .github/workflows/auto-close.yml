@@ -63,13 +63,7 @@ jobs:
           # FIREBASE_SERVICE_ACCOUNT_KEYを一時ファイルに保存
           echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}' > ${{ github.workspace }}/service-account-key.json
           echo "GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account-key.json" >> $GITHUB_ENV
-
-      - name: Authenticate to Google Cloud (Workload Identity)
-        continue-on-error: true
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          echo "✅ Google Cloud認証情報を設定しました"
 
       - name: Run 3-Phase Auto-Close Detection
         env:
