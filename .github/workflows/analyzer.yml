@@ -51,15 +51,6 @@ jobs:
 
       # ==================== Word→Markdown変換 ====================
 
-      - name: Set up Python for Word conversion
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      - name: Install Python dependencies
-        run: |
-          pip install python-docx
-
       - name: Detect changed minutes files
         id: changed_files
         run: |
@@ -127,11 +118,35 @@ jobs:
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
 
+      # Python環境準備（Word変換用）
+      - name: Setup Python
+        if: steps.changed_files.outputs.has_docx == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        if: steps.changed_files.outputs.has_docx == 'true'
+        run: |
+          pip install python-docx lxml
+
+      # Node.js環境準備（議事録解析用）
+      - name: Setup Node.js
+        if: steps.changed_files.outputs.has_changes == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node.js dependencies
+        if: steps.changed_files.outputs.has_changes == 'true'
+        run: npm ci
+
       - name: Convert Word to Markdown
         if: steps.changed_files.outputs.has_docx == 'true'
         run: |
           echo "=========================================="
-          echo "Word → Markdown 変換実行"
+          echo "Word → Markdown 変換実行（新テンプレート対応版）"
           echo "=========================================="
 
           for file in ${{ steps.changed_files.outputs.files_docx }}; do
@@ -161,13 +176,17 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          # .mdファイルが存在する場合のみgit add
-          if ls minutes/*.md 1> /dev/null 2>&1; then
-            git add minutes/*.md
-          else
-            echo "⚠️ .mdファイルが見つかりません。スキップします。"
-            exit 0
-          fi
+          # 変換されたファイルだけを追加
+          for docx_file in ${{ steps.changed_files.outputs.files_docx }}; do
+            filename=$(basename -- "$docx_file")
+            filename="${filename%.*}"
+            md_file="minutes/${filename}.md"
+
+            if [ -f "$md_file" ]; then
+              git add "$md_file"
+              echo "📝 追加: $md_file"
+            fi
+          done
 
           if git diff --quiet && git diff --staged --quiet; then
             echo "変更がないため、コミットをスキップ"
@@ -175,31 +194,21 @@ jobs:
             git commit -m "docs: Auto-convert minutes from Word to Markdown [skip ci]" \
                        -m "Automatically converted by analyzer.yml reusable workflow"
 
-            # リモートの変更を取得してからpush
-            git pull --rebase origin ${{ github.ref_name }}
+            # リモートの変更を取得してからpush（未ステージの変更は自動stash）
+            git pull --rebase --autostash origin ${{ github.ref_name }}
             git push
             echo "✅ Markdownファイルをコミット＆プッシュ"
           fi
 
       # ==================== 議事録解析 ====================
 
-      - name: Setup Node.js for analysis
+      - name: Setup Google Cloud credentials
         if: steps.changed_files.outputs.has_changes == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install Node.js dependencies
-        if: steps.changed_files.outputs.has_changes == 'true'
-        run: npm ci
-
-      - name: Authenticate to Google Cloud
-        if: steps.changed_files.outputs.has_changes == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SA_EMAIL }}
+        run: |
+          # FIREBASE_SERVICE_ACCOUNT_KEYを一時ファイルに保存
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}' > ${{ github.workspace }}/service-account-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account-key.json" >> $GITHUB_ENV
+          echo "✅ Google Cloud認証情報を設定しました"
 
       - name: Analyze minutes with AI
         if: steps.changed_files.outputs.has_changes == 'true'
